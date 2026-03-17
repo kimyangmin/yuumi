@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::lexer::Lexer;
 use crate::parser::{AccessLevel, BinaryOp, ClassMember, Expr, Param, Program, Stmt, UnaryOp};
@@ -61,7 +61,7 @@ struct Evaluator {
     classes: HashMap<String, ClassDefEval>,
     objects: Vec<ObjectInstance>,
     current_class: Vec<Option<String>>,
-    imported_paths: HashSet<String>,
+    import_stack: Vec<PathBuf>,
 }
 
 impl Evaluator {
@@ -73,7 +73,7 @@ impl Evaluator {
             classes: HashMap::new(),
             objects: Vec::new(),
             current_class: vec![None],
-            imported_paths: HashSet::new(),
+            import_stack: Vec::new(),
         }
     }
 
@@ -603,12 +603,10 @@ impl Evaluator {
                 TypeName::Double => Ok(Value::Double(self.as_f64(&lhs)? / self.as_f64(&rhs)?)),
                 _ => Err("unsupported '/' operands".to_string()),
             },
-            BinaryOp::Mod => {
-                match common_numeric_type(&lhs, &rhs)? {
-                    TypeName::Int => Ok(Value::Int(self.as_int(&lhs)? % self.as_int(&rhs)?)),
-                    _ => Err("'%' supports int only".to_string()),
-                }
-            }
+            BinaryOp::Mod => match common_numeric_type(&lhs, &rhs)? {
+                TypeName::Int => Ok(Value::Int(self.as_int(&lhs)? % self.as_int(&rhs)?)),
+                _ => Err("'%' supports int only".to_string()),
+            },
             BinaryOp::Eq => Ok(Value::Bool(self.compare_values(&lhs, &rhs)? == 0)),
             BinaryOp::NotEq => Ok(Value::Bool(self.compare_values(&lhs, &rhs)? != 0)),
             BinaryOp::Lt => Ok(Value::Bool(self.compare_values(&lhs, &rhs)? < 0)),
@@ -753,31 +751,45 @@ impl Evaluator {
     }
 
     fn execute_import(&mut self, path: &str) -> Result<(), String> {
-        let resolved = PathBuf::from(path);
-        let key = resolved.to_string_lossy().to_string();
-        if self.imported_paths.contains(&key) {
-            return Ok(());
-        }
+        let base_dir = self
+            .import_stack
+            .last()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+        let target = if path.ends_with(".yu") {
+            PathBuf::from(path)
+        } else {
+            PathBuf::from(format!("{path}.yu"))
+        };
+        let resolved = if target.is_absolute() {
+            target
+        } else {
+            base_dir.join(target)
+        };
 
         let source = std::fs::read_to_string(&resolved)
-            .map_err(|err| format!("failed to read import '{path}': {err}"))?;
-
+            .map_err(|err| format!("failed to read import '{}': {err}", resolved.display()))?;
         let mut lexer = Lexer::new(&source);
         let tokens = lexer
             .tokenize()
-            .map_err(|err| format!("import lexer error in '{path}': {err}"))?;
+            .map_err(|err| format!("import lexer error in '{}': {err}", resolved.display()))?;
         let mut parser = Parser::new(tokens);
         let program = parser
             .parse()
-            .map_err(|err| format!("import parser error in '{path}': {err}"))?;
+            .map_err(|err| format!("import parser error in '{}': {err}", resolved.display()))?;
 
-        self.imported_paths.insert(key);
+        self.import_stack.push(resolved);
         for stmt in &program.statements {
             match self.execute_stmt(stmt)? {
                 Flow::Value(_) => {}
-                Flow::Return(_) => return Err("return is not allowed at top-level imported file".to_string()),
+                Flow::Return(_) => {
+                    self.import_stack.pop();
+                    return Err("return is not allowed at imported module top level".to_string());
+                }
             }
         }
+        self.import_stack.pop();
         Ok(())
     }
 }

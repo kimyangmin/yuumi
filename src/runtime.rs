@@ -127,7 +127,11 @@ pub fn convert_value(value: Value, target: TypeName) -> Result<Value, String> {
         }
         (Value::Unit, _) => Err("unit value cannot be assigned".to_string()),
         (Value::Ref(reference), _) => Err(format!("reference to '{}' cannot be assigned without dereference", reference.ty.keyword())),
-        (source, target) => Err(format!("cannot assign value of type '{}' to '{}'", source.ty().as_ref().map(|ty| ty.keyword()).unwrap_or("unit"), target.keyword())),
+        (source, target) => Err(format!(
+            "cannot assign value of type '{}' to '{}'",
+            source.ty().as_ref().map(|ty| ty.keyword()).unwrap_or("unit"),
+            target.keyword()
+        )),
     }
 }
 

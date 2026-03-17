@@ -66,17 +66,20 @@ impl<'a> Lexer<'a> {
     pub fn tokenize(&mut self) -> Result<Vec<Token>, String> {
         let mut tokens = Vec::new();
         let mut indent_stack = vec![0usize];
+        let mut in_block_comment = false;
 
         for raw_line in self.input.lines() {
-            if raw_line.trim().is_empty() {
+            let line = Self::strip_comments(raw_line, &mut in_block_comment)?;
+
+            if line.trim().is_empty() {
                 continue;
             }
 
-            if raw_line.starts_with('\t') {
+            if line.starts_with('\t') {
                 return Err("tabs are not supported for indentation".to_string());
             }
 
-            let indent = raw_line.chars().take_while(|ch| *ch == ' ').count();
+            let indent = line.chars().take_while(|ch| *ch == ' ').count();
             let current_indent = *indent_stack.last().unwrap_or(&0);
 
             if indent > current_indent {
@@ -93,8 +96,12 @@ impl<'a> Lexer<'a> {
                 }
             }
 
-            self.tokenize_line(&raw_line[indent..], &mut tokens)?;
+            self.tokenize_line(&line[indent..], &mut tokens)?;
             tokens.push(Token::Newline);
+        }
+
+        if in_block_comment {
+            return Err("unterminated block comment".to_string());
         }
 
         while indent_stack.len() > 1 {
@@ -104,6 +111,40 @@ impl<'a> Lexer<'a> {
 
         tokens.push(Token::Eof);
         Ok(tokens)
+    }
+
+    fn strip_comments(line: &str, in_block_comment: &mut bool) -> Result<String, String> {
+        let chars: Vec<char> = line.chars().collect();
+        let mut out = String::new();
+        let mut i = 0usize;
+
+        while i < chars.len() {
+            if *in_block_comment {
+                if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '/' {
+                    *in_block_comment = false;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+
+            if chars[i] == '/' && i + 1 < chars.len() {
+                if chars[i + 1] == '/' {
+                    break;
+                }
+                if chars[i + 1] == '*' {
+                    *in_block_comment = true;
+                    i += 2;
+                    continue;
+                }
+            }
+
+            out.push(chars[i]);
+            i += 1;
+        }
+
+        Ok(out)
     }
 
     fn tokenize_line(&self, line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
@@ -455,6 +496,46 @@ mod tests {
         assert!(tokens.contains(&Token::For));
         assert!(tokens.contains(&Token::In));
         assert!(tokens.contains(&Token::While));
+    }
+
+    #[test]
+    fn tokenizes_slash_comments() {
+        let mut lexer = Lexer::new("int a = 1 // comment\n// full line comment\nprintln(a)\n");
+        let tokens = lexer.tokenize().unwrap();
+
+        assert!(tokens.contains(&Token::Int));
+        assert!(tokens.contains(&Token::Identifier("a".to_string())));
+        assert!(tokens.contains(&Token::Identifier("println".to_string())));
+    }
+
+    #[test]
+    fn tokenizes_inline_block_comment() {
+        let mut lexer = Lexer::new("int a = 1 /* hidden */ + 2\n");
+        let tokens = lexer.tokenize().unwrap();
+
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Int,
+                Token::Identifier("a".to_string()),
+                Token::Equal,
+                Token::IntLiteral(1),
+                Token::Plus,
+                Token::IntLiteral(2),
+                Token::Newline,
+                Token::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_multiline_block_comment() {
+        let mut lexer = Lexer::new("int a = 1\n/* hidden\ncomment */\nprintln(a)\n");
+        let tokens = lexer.tokenize().unwrap();
+
+        assert!(tokens.contains(&Token::Int));
+        assert!(tokens.contains(&Token::Identifier("a".to_string())));
+        assert!(tokens.contains(&Token::Identifier("println".to_string())));
     }
 }
 

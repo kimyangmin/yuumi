@@ -149,16 +149,11 @@ for i in range(3):
 
 for i in range(2, 5):
     println(i)
-
-import "lib.yu"
-import util
 ```
-
-- `import "path/to/file.yu"` 또는 `import module_name` (`module_name.yu`)를 지원합니다.
 
 ### 7) 연산
 
-- 산술: `+ - * / %`
+- 산술: `+ - * /`
 - 비교: `== != < <= > >=`
 - 단항: `-x`, `not x`
 
@@ -239,10 +234,10 @@ int x = int("abc")
 ## 현재 제한 사항
 
 - 엔진 선택은 없습니다. 항상 native 진입점을 사용합니다.
-- 단일 상속(`class Child(Parent):`)을 지원합니다.
-- `protect`는 현재 같은 클래스 + 자식 클래스에서 접근 가능합니다.
+- 클래스 상속은 없습니다.
+- `protect`는 현재 `private`와 동일하게 동작합니다.
 - `default`는 현재 `public`처럼 동작합니다.
-- `import`는 현재 파일 로딩 기반(패키지 시스템 없음)입니다.
+- `%`(modulo) 연산자는 없습니다.
 - `&T`, `&mut T` 빌려쓰기 선언은 문법은 남아 있지만 native/evaluator 경로에서 사실상 지원 대상이 아닙니다.
 
 ## 간단 예제

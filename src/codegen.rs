@@ -146,9 +146,6 @@ fn stmt_requires_evaluator(stmt: &Stmt) -> bool {
         Stmt::Assign { value, .. } => expr_requires_evaluator(value),
         Stmt::Swap { .. } => false,
         Stmt::If { branches, else_branch } => {
-            if else_branch.is_empty() {
-                return true;
-            }
             branches.iter().any(|(cond, body)| expr_requires_evaluator(cond) || body.iter().any(stmt_requires_evaluator))
                 || else_branch.iter().any(stmt_requires_evaluator)
         }

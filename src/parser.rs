@@ -524,13 +524,9 @@ impl Parser {
             branches.push((condition, self.parse_suite()?));
         }
 
-        let else_branch = if matches!(self.peek(), Token::Else) {
-            self.advance();
-            self.expect(Token::Colon, "expected ':' after else")?;
-            self.parse_suite()?
-        } else {
-            Vec::new()
-        };
+        self.expect(Token::Else, "expected 'else' after if/elif chain")?;
+        self.expect(Token::Colon, "expected ':' after else")?;
+        let else_branch = self.parse_suite()?;
 
         Ok(Stmt::If {
             branches,
