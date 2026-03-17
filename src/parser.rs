@@ -1,6 +1,7 @@
 use crate::builtins::is_range_function;
 use crate::lexer::Token;
 use crate::runtime::{BindingMode, TypeName};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -15,6 +16,14 @@ pub enum Stmt {
         name: String,
         ty: TypeName,
         value: Expr,
+    },
+    Assign {
+        name: String,
+        value: Expr,
+    },
+    Swap {
+        left: Vec<String>,
+        right: Vec<String>,
     },
     If {
         branches: Vec<(Expr, Vec<Stmt>)>,
@@ -102,9 +111,70 @@ impl Parser {
             Token::If => self.parse_if_statement(),
             Token::While => self.parse_while_statement(),
             Token::For => self.parse_for_statement(),
-            token if Self::is_decl_start(token) => self.parse_var_decl(),
+            token if Self::is_decl_start(token) && !matches!(self.peek_offset(1), Token::LParen) => {
+                self.parse_var_decl()
+            }
+            Token::Identifier(_) if matches!(self.peek_offset(1), Token::Comma) => self.parse_swap_statement(),
+            // 재할당: identifier = expr
+            Token::Identifier(_) if self.peek_offset(1) == &Token::Equal => {
+                let name = match self.advance() {
+                    Token::Identifier(n) => n,
+                    _ => unreachable!(),
+                };
+                self.advance(); // consume '='
+                let value = self.parse_expression()?;
+                Ok(Stmt::Assign { name, value })
+            }
             _ => Ok(Stmt::Expr(self.parse_expression()?)),
         }
+    }
+
+    fn parse_swap_statement(&mut self) -> Result<Stmt, String> {
+        let left = self.parse_identifier_tuple()?;
+        if left.len() < 2 {
+            return Err("swap requires at least two variables".to_string());
+        }
+
+        self.expect(Token::Equal, "expected '=' in swap statement")?;
+        let right = self.parse_identifier_tuple()?;
+
+        if left.len() != right.len() {
+            return Err("swap requires the same number of variables on both sides".to_string());
+        }
+
+        let left_set: HashSet<&str> = left.iter().map(String::as_str).collect();
+        let right_set: HashSet<&str> = right.iter().map(String::as_str).collect();
+
+        if left_set.len() != left.len() || right_set.len() != right.len() {
+            return Err("swap does not allow duplicate variable names".to_string());
+        }
+
+        if left_set != right_set {
+            return Err("swap requires both sides to contain the same variable names".to_string());
+        }
+
+        Ok(Stmt::Swap { left, right })
+    }
+
+    fn parse_identifier_tuple(&mut self) -> Result<Vec<String>, String> {
+        let mut names = Vec::new();
+
+        let first = match self.advance() {
+            Token::Identifier(name) => name,
+            other => return Err(format!("expected variable name, found {other:?}")),
+        };
+        names.push(first);
+
+        while matches!(self.peek(), Token::Comma) {
+            self.advance();
+            let name = match self.advance() {
+                Token::Identifier(name) => name,
+                other => return Err(format!("expected variable name after ',', found {other:?}")),
+            };
+            names.push(name);
+        }
+
+        Ok(names)
     }
 
     fn is_decl_start(token: &Token) -> bool {
@@ -350,6 +420,10 @@ impl Parser {
             Token::StringLiteral(value) => Ok(Expr::StringLiteral(value)),
             Token::True => Ok(Expr::BoolLiteral(true)),
             Token::False => Ok(Expr::BoolLiteral(false)),
+            Token::Int => self.parse_keyword_call("int"),
+            Token::Float => self.parse_keyword_call("float"),
+            Token::Double => self.parse_keyword_call("double"),
+            Token::Str => self.parse_keyword_call("str"),
             Token::Identifier(name) => {
                 if matches!(self.peek(), Token::LParen) {
                     self.advance();
@@ -381,6 +455,30 @@ impl Parser {
         }
     }
 
+    fn parse_keyword_call(&mut self, name: &str) -> Result<Expr, String> {
+        if !matches!(self.peek(), Token::LParen) {
+            return Err(format!("unexpected type keyword '{name}' in expression"));
+        }
+
+        self.advance();
+        let mut args = Vec::new();
+        if !matches!(self.peek(), Token::RParen) {
+            loop {
+                args.push(self.parse_expression()?);
+                if matches!(self.peek(), Token::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(Token::RParen, "expected ')' after call arguments")?;
+        Ok(Expr::Call {
+            name: name.to_string(),
+            args,
+        })
+    }
+
     fn consume_newlines(&mut self) {
         while matches!(self.peek(), Token::Newline) {
             self.advance();
@@ -398,6 +496,10 @@ impl Parser {
 
     fn peek(&self) -> &Token {
         self.tokens.get(self.pos).unwrap_or(&Token::Eof)
+    }
+
+    fn peek_offset(&self, offset: usize) -> &Token {
+        self.tokens.get(self.pos + offset).unwrap_or(&Token::Eof)
     }
 
     fn advance(&mut self) -> Token {
@@ -527,6 +629,38 @@ mod tests {
         let program = parser.parse().unwrap();
 
         assert!(matches!(program.statements[0], Stmt::ForRange { .. }));
+    }
+
+    #[test]
+    fn parses_swap_statement() {
+        let mut lexer = Lexer::new("int a = 10\nint b = 20\na, b = b, a\n");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        assert_eq!(
+            program.statements[2],
+            Stmt::Swap {
+                left: vec!["a".to_string(), "b".to_string()],
+                right: vec!["b".to_string(), "a".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn parses_multi_swap_statement() {
+        let mut lexer = Lexer::new("int a = 10\nint b = 20\nint c = 30\na, b, c = c, b, a\n");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        assert_eq!(
+            program.statements[3],
+            Stmt::Swap {
+                left: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+                right: vec!["c".to_string(), "b".to_string(), "a".to_string()],
+            }
+        );
     }
 
     #[test]

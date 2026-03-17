@@ -2,6 +2,12 @@
 pub enum BuiltinFunction {
     Print,
     Println,
+    Input,
+    TypeOf,
+    StrCast,
+    IntCast,
+    FloatCast,
+    DoubleCast,
     Range,
 }
 
@@ -10,6 +16,12 @@ impl BuiltinFunction {
         match name {
             "print" => Some(Self::Print),
             "println" => Some(Self::Println),
+            "input" => Some(Self::Input),
+            "type" => Some(Self::TypeOf),
+            "str" => Some(Self::StrCast),
+            "int" => Some(Self::IntCast),
+            "float" => Some(Self::FloatCast),
+            "double" => Some(Self::DoubleCast),
             "range" => Some(Self::Range),
             _ => None,
         }

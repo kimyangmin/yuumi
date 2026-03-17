@@ -3,17 +3,10 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
-use yuumi::{create_backend, BytecodeCompiler, Interpreter, Lexer, NativeBackendKind, Parser, Value, Vm};
-
-#[derive(Debug, Clone, Copy)]
-enum Engine {
-    Interp,
-    Vm,
-    Native,
-}
+use yuumi::{create_backend, Lexer, NativeBackendKind, Parser, Value};
 
 fn main() {
-    let (engine, script_path) = parse_cli(env::args().skip(1));
+    let script_path = parse_cli(env::args().skip(1));
     let source = match load_source(script_path.as_deref()) {
         Ok(source) => source,
         Err(err) => {
@@ -40,30 +33,13 @@ fn main() {
         }
     };
 
-    let result = match engine {
-        Engine::Interp => {
-            let mut interpreter = Interpreter::new();
-            interpreter.execute_program(&program_ast)
-        }
-        Engine::Vm => {
-            let compiler = BytecodeCompiler::new();
-            let program = match compiler.compile_program(&program_ast) {
-                Ok(program) => program,
-                Err(err) => {
-                    eprintln!("compile error: {err}");
-                    process::exit(1);
-                }
-            };
-            Vm::new().run(&program)
-        }
-        Engine::Native => create_backend(NativeBackendKind::Cranelift).execute_program(&program_ast),
-    };
+    let result = create_backend(NativeBackendKind::Cranelift).execute_program(&program_ast);
 
     match result {
         Ok(value) => {
             // 스크립트 실행 모드에서는 스크립트가 만든 출력만 보여준다.
             if script_path.is_none() {
-                println!("engine: {}\nsource: {source}\nresult: {}", engine_name(engine), format_result(value));
+                println!("engine: native\nsource: {source}\nresult: {}", format_result(value));
             }
         }
         Err(err) => {
@@ -73,21 +49,12 @@ fn main() {
     }
 }
 
-fn parse_cli(args: impl Iterator<Item = String>) -> (Engine, Option<String>) {
-    let mut engine = Engine::Interp;
+fn parse_cli(args: impl Iterator<Item = String>) -> Option<String> {
     let mut script_path = None;
 
     for arg in args {
-        if let Some(value) = arg.strip_prefix("--engine=") {
-            engine = match value {
-                "interp" => Engine::Interp,
-                "vm" => Engine::Vm,
-                "native" => Engine::Native,
-                other => {
-                    eprintln!("unknown engine '{other}', fallback to interp");
-                    Engine::Interp
-                }
-            };
+        if arg.starts_with("--engine=") {
+            eprintln!("--engine option is ignored: native is always used");
             continue;
         }
 
@@ -96,7 +63,7 @@ fn parse_cli(args: impl Iterator<Item = String>) -> (Engine, Option<String>) {
         }
     }
 
-    (engine, script_path)
+    script_path
 }
 
 fn load_source(script_path: Option<&str>) -> Result<String, String> {
@@ -116,13 +83,6 @@ fn load_source(script_path: Option<&str>) -> Result<String, String> {
     }
 }
 
-fn engine_name(engine: Engine) -> &'static str {
-    match engine {
-        Engine::Interp => "interp",
-        Engine::Vm => "vm",
-        Engine::Native => "native",
-    }
-}
 
 fn format_result(value: Value) -> String {
     value.to_string()

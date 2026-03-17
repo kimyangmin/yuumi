@@ -1,91 +1,164 @@
-# yuumi
+# Yuumi
 
-Rust로 작성한 Python-like 문법 실험 언어 런타임/컴파일러 골격입니다. 현재는 정적 타입 선언, 들여쓰기 기반 `if/elif/else`, 기본 내장 함수 `print(...)`, borrow 선언, 그리고 `Cranelift` 네이티브 백엔드 fast path를 포함합니다.
+현재 `Yuumi`는 **native(Cranelift) 엔진 고정**으로 실행되는 정적 타입 스크립트 언어입니다.
 
-## Structure
-
-- `src/lexer.rs`: 토큰화 (`int score = 30`, `==`, `&int`, `&mut int` 등)
-- `src/keywords.rs`: 언어 키워드 테이블 (`if`, `for`, `while`, 타입 키워드)
-- `src/builtins.rs`: 내장 함수 테이블 (`print`, `range`)
-- `src/parser.rs`: 타입 AST/Program 구성, 비교 연산, 들여쓰기 블록 파싱
-- `src/runtime.rs`: 값 표현(`Value`), 타입(`TypeName`), borrow 메타데이터
-- `src/interpreter.rs`: AST 인터프리터, 타입 변환, borrow 검사
-- `src/vm.rs`: 슬롯 기반 바이트코드 VM
-- `src/codegen.rs`: `Cranelift` JIT 네이티브 백엔드, `LLVM` 예약 자리
-- `src/main.rs`: `interp` / `vm` / `native` 실행 선택
-
-## 현재 문법
-
-```text
-int score = 30
-&int shared = score
-bool ready = True
-
-if score == 30:
-    print(score)
-else:
-    print(0)
-```
-
-지원 기능:
-- 정적 선언: `int name = ...`, `float name = ...`, `double name = ...`, `bool name = ...`, `str name = "..."`
-- borrow 선언: `&int view = score`, `&mut int writer = score`
-- 산술/비교 연산: `+ - * /`, `== != < <= > >=`
-- 문자열: `str` 타입, 문자열 리터럴(`"text"`), 문자열 결합(`"a" + "b"`)
-- 단항 연산: `-expr`, `not expr`
-- 기본 내장 함수: `print(a, b, ...)`
-- 들여쓰기 블록: `if / elif / else`
-- 반복문: `while`, `for <name> in range(...)`
-
-## 속도 우선 구조
-
-- 프론트엔드: Rust (`lexer -> parser -> typed AST`)
-- 인터프리터: 빠른 검증용이지만 문자열 기반 환경 대신 슬롯화된 구조를 사용
-- VM: 인덱스 기반 글로벌 슬롯과 단순 opcode로 해시 조회를 최소화
-- 네이티브 백엔드: `Cranelift` JIT 연결 완료, `LLVM`는 차후 연결용 자리 유지
-- 메모리/소유권: borrow 선언 시 shared/mutable 충돌 검사, 슬롯 기반 참조 추적
-
-## 엔진별 상태
-
-| 엔진 | 상태 | 지원 범위 |
-|---|---|---|
-| `interp` | 안정적 | 현재 문법 대부분 |
-| `vm` | 안정적 | 현재 문법 대부분 |
-| `native` | 실험적 | 현재는 `owned int/bool`, 비교식, `if`, `print` 중심 |
-
-## Quick Start
+## 실행
 
 ```bash
-cargo run
-cargo run -- --engine=vm
-cargo run -- --engine=native
 cargo run -- script.yu
-cargo run -- --engine=vm script.yu
-cargo run -- --engine=native script.yu
-cargo test
 ```
 
-`*.yu` example:
+- `--engine=...` 옵션은 무시됩니다.
+- `.yu` 확장자 파일만 실행할 수 있습니다.
 
-```text
-int score = 30
-if score == 30:
-	print(score)
-elif False:
-	print(20)
+## 현재 지원 문법
+
+### 1) 변수 선언 / 재할당
+
+```yu
+int a = 10
+float b = 1.5f
+double c = 2.0
+bool ok = True
+str name = "yuumi"
+
+a = 20
+name = "mike"
+```
+
+### 2) 다중 변수 스왑 (파이썬 스타일)
+
+```yu
+int a = 10
+int b = 20
+int c = 30
+
+a, b, c = c, b, a
+```
+
+- 좌/우 변수 개수는 같아야 합니다.
+- 좌/우에 등장하는 변수 집합이 같아야 합니다.
+- 중복 변수명은 허용하지 않습니다.
+- 각 대입 위치에서 타입이 다르면 에러가 납니다.
+
+### 3) 제어문
+
+```yu
+if a > 0:
+    println("positive")
+elif a == 0:
+    println("zero")
 else:
-	print(10)
+    println("negative")
+
+while a < 5:
+    a = a + 1
 
 for i in range(3):
-	print(i)
+    println(i)
 
-while False:
-	print(0)
+for i in range(2, 5):
+    println(i)
 ```
 
-## 제한 사항
+### 4) 연산
 
-- `native` 엔진은 아직 `float/double/borrow` 전체를 네이티브 코드로 내리지 않습니다.
-- `LLVM` 백엔드는 아직 placeholder 입니다.
-- borrow는 MVP 수준의 shared/mutable 충돌 검사를 제공하며, 완전한 Rust borrow checker는 아닙니다.
+- 산술: `+ - * /`
+- 비교: `== != < <= > >=`
+- 단항: `-x`, `not x`
 
+문자열 특수 연산:
+
+```yu
+println("ab" + "cd")   # abcd
+println("*" * 4)       # ****
+println(3 * "ab")      # ababab
+```
+
+## 내장 함수
+
+### 출력
+
+```yu
+print(10, 20, 30)      # 10 20 30  (개행 없음)
+println(10, 20, 30)    # 10 20 30  (개행 있음)
+```
+
+- 콤마 인자는 공백으로 구분되어 출력됩니다.
+
+### 입력
+
+```yu
+str name = input("name: ")
+println("hello", name)
+```
+
+- `input()` 또는 `input(prompt)` 형태를 지원합니다.
+
+### 타입 확인
+
+```yu
+println(type(10))      # int
+println(type(3.0f))    # float
+println(type(2.0))     # double
+println(type(True))    # bool
+println(type("x"))    # str
+```
+
+### 타입 변환
+
+```yu
+println(str(10))          # "10"
+println(int("42"))       # 42
+println(float("3"))      # 3.0
+println(double("3"))     # 3.0
+println(float(str(3)))    # 3.0
+println(double(str(3)))   # 3.0
+```
+
+변환 실패 시 런타임 에러가 발생합니다.
+
+예:
+
+```yu
+int x = int("abc")
+# runtime error: cannot convert 'abc' to int
+```
+
+## 숫자/캐스팅 규칙 요약
+
+- `double -> float` 변환은 허용됩니다. (정밀도 손실 가능)
+- `int -> float`, `int -> double` 변환은 허용됩니다. (예: `a = 3` -> `3.0`)
+- `str("3") -> float/double` 변환은 허용됩니다. 결과는 `3.0` 형태로 출력됩니다.
+- `bool -> float/double` 직접 변환은 허용되지 않습니다.
+
+## 리터럴 규칙
+
+- `int`: `10`, `-3`
+- `float`: `1.5f`, `3f`
+- `double`: `1.5`, `3.0`
+- `bool`: `True`, `False`
+- `str`: `"text"`
+
+## 현재 제한 사항
+
+- 엔진은 native 단일 경로입니다.
+- 사용자 정의 함수는 없습니다.
+- `&T`, `&mut T` 빌려쓰기 선언은 문법은 존재하지만 native 실행에서 지원하지 않습니다.
+- `%`(modulo) 연산자는 현재 없습니다.
+
+## 간단 예제
+
+```yu
+str name = input("name: ")
+float amount = float(name)
+println("amount:", amount)
+
+int a = 10
+int b = 20
+int c = 30
+a, b, c = c, b, a
+println(a, b, c)
+
+println(type(amount), type(a), type(name))
+```
