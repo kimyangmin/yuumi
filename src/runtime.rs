@@ -1,26 +1,28 @@
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeName {
     Int,
     Float,
     Double,
     Bool,
     Str,
+    Named(String),
 }
 
 impl TypeName {
-    pub fn keyword(self) -> &'static str {
+    pub fn keyword(&self) -> &str {
         match self {
             Self::Int => "int",
             Self::Float => "float",
             Self::Double => "double",
             Self::Bool => "bool",
             Self::Str => "str",
+            Self::Named(name) => name.as_str(),
         }
     }
 
-    pub fn is_numeric(self) -> bool {
+    pub fn is_numeric(&self) -> bool {
         matches!(self, Self::Int | Self::Float | Self::Double)
     }
 }
@@ -32,7 +34,7 @@ pub enum BindingMode {
     MutableBorrow,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reference {
     pub slot: usize,
     pub mutable: bool,
@@ -52,6 +54,7 @@ pub enum Value {
     Double(f64),
     Bool(bool),
     Str(String),
+    Object { class_name: String, object_id: usize },
     Ref(Reference),
     Unit,
 }
@@ -64,7 +67,8 @@ impl Value {
             Self::Double(_) => Some(TypeName::Double),
             Self::Bool(_) => Some(TypeName::Bool),
             Self::Str(_) => Some(TypeName::Str),
-            Self::Ref(reference) => Some(reference.ty),
+            Self::Object { class_name, .. } => Some(TypeName::Named(class_name.clone())),
+            Self::Ref(reference) => Some(reference.ty.clone()),
             Self::Unit => None,
         }
     }
@@ -76,6 +80,7 @@ impl Value {
             Self::Double(value) => *value != 0.0,
             Self::Bool(value) => *value,
             Self::Str(value) => !value.is_empty(),
+            Self::Object { .. } => true,
             Self::Ref(_) => true,
             Self::Unit => false,
         }
@@ -96,6 +101,7 @@ impl fmt::Display for Value {
                 }
             }
             Self::Str(value) => write!(f, "{value}"),
+            Self::Object { class_name, object_id } => write!(f, "<{class_name}#{object_id}>"),
             Self::Ref(reference) => write!(f, "<ref:{}:{}>", if reference.mutable { "mut" } else { "shared" }, reference.ty.keyword()),
             Self::Unit => write!(f, "()"),
         }
@@ -116,9 +122,12 @@ pub fn convert_value(value: Value, target: TypeName) -> Result<Value, String> {
         (Value::Bool(value), TypeName::Int) => Ok(Value::Int(i64::from(value))),
         (Value::Bool(value), TypeName::Float) => Ok(Value::Float(if value { 1.0 } else { 0.0 })),
         (Value::Bool(value), TypeName::Double) => Ok(Value::Double(if value { 1.0 } else { 0.0 })),
+        (Value::Object { class_name, object_id }, TypeName::Named(expected)) if class_name == expected => {
+            Ok(Value::Object { class_name, object_id })
+        }
         (Value::Unit, _) => Err("unit value cannot be assigned".to_string()),
         (Value::Ref(reference), _) => Err(format!("reference to '{}' cannot be assigned without dereference", reference.ty.keyword())),
-        (source, target) => Err(format!("cannot assign value of type '{}' to '{}'", source.ty().map(|ty| ty.keyword()).unwrap_or("unit"), target.keyword())),
+        (source, target) => Err(format!("cannot assign value of type '{}' to '{}'", source.ty().as_ref().map(|ty| ty.keyword()).unwrap_or("unit"), target.keyword())),
     }
 }
 

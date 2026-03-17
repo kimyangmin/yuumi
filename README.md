@@ -10,6 +10,7 @@ cargo run -- script.yu
 
 - `--engine=...` 옵션은 무시됩니다.
 - `.yu` 확장자 파일만 실행할 수 있습니다.
+- 단순 수치/문자열 중심 코드는 JIT 경로를 사용하고, `def`/`class` 같은 고급 문법은 evaluator 경로로 실행됩니다.
 
 ## 현재 지원 문법
 
@@ -24,6 +25,16 @@ str name = "yuumi"
 
 a = 20
 name = "mike"
+b = 3        # 3.0 으로 변환됨
+```
+
+사용자 정의 클래스 타입 선언도 가능합니다.
+
+```yu
+class Box:
+    public int value = 0
+
+Box b = Box()
 ```
 
 ### 2) 다중 변수 스왑 (파이썬 스타일)
@@ -41,7 +52,86 @@ a, b, c = c, b, a
 - 중복 변수명은 허용하지 않습니다.
 - 각 대입 위치에서 타입이 다르면 에러가 납니다.
 
-### 3) 제어문
+### 3) 함수 정의 (`def`)
+
+```yu
+public def add(int a, int b):
+    return a + b
+
+println(add(2, 3))
+```
+
+지원 사항:
+- `def name(...):` 문법
+- 들여쓰기 블록 본문
+- `return expr`
+- 파라미터 타입 명시 가능
+- 메서드의 `self` 파라미터는 타입 없이 사용
+
+### 4) 클래스 정의 (`class`)
+
+```yu
+class Counter:
+    public int value = 0
+
+    public def init(self, int start):
+        self.value = start
+
+    public def inc(self):
+        self.value = self.value + 1
+        return self.value
+
+Counter c = Counter(10)
+println(c.value)
+println(c.inc())
+```
+
+지원 사항:
+- `class Name:` 문법
+- 필드 선언
+- 메서드 선언
+- 생성자 역할의 `init(self, ...)`
+- 멤버 접근: `obj.field`
+- 메서드 호출: `obj.method(...)`
+- 멤버 대입: `self.value = ...`, `obj.value = ...`
+
+### 5) 접근 제한자
+
+지원 키워드:
+- `public`
+- `default`
+- `private`
+- `protect`
+
+예:
+
+```yu
+class Box:
+    public int open = 1
+    private int secret = 2
+    protect int hidden = 3
+
+    public def init(self):
+        return 0
+```
+
+현재 규칙:
+- `public`, `default`: 외부 접근 가능
+- `private`, `protect`: 같은 클래스 내부 메서드에서만 접근 가능
+
+예:
+
+```yu
+class Box:
+    private int secret = 7
+    public def init(self):
+        return 0
+
+Box b = Box()
+println(b.secret)   # runtime error
+```
+
+### 6) 제어문
 
 ```yu
 if a > 0:
@@ -59,11 +149,16 @@ for i in range(3):
 
 for i in range(2, 5):
     println(i)
+
+import "lib.yu"
+import util
 ```
 
-### 4) 연산
+- `import "path/to/file.yu"` 또는 `import module_name` (`module_name.yu`)를 지원합니다.
 
-- 산술: `+ - * /`
+### 7) 연산
+
+- 산술: `+ - * / %`
 - 비교: `== != < <= > >=`
 - 단항: `-x`, `not x`
 
@@ -98,22 +193,23 @@ println("hello", name)
 ### 타입 확인
 
 ```yu
-println(type(10))      # int
-println(type(3.0f))    # float
-println(type(2.0))     # double
-println(type(True))    # bool
-println(type("x"))    # str
+println(type(10))        # int
+println(type(3.0f))      # float
+println(type(2.0))       # double
+println(type(True))      # bool
+println(type("x"))      # str
+println(type(Box()))     # Box
 ```
 
 ### 타입 변환
 
 ```yu
-println(str(10))          # "10"
-println(int("42"))       # 42
-println(float("3"))      # 3.0
-println(double("3"))     # 3.0
-println(float(str(3)))    # 3.0
-println(double(str(3)))   # 3.0
+println(str(10))            # 10
+println(int("42"))         # 42
+println(float("3"))        # 3.0
+println(double("3"))       # 3.0
+println(float(str(3)))      # 3.0
+println(double(str(3)))     # 3.0
 ```
 
 변환 실패 시 런타임 에러가 발생합니다.
@@ -128,7 +224,7 @@ int x = int("abc")
 ## 숫자/캐스팅 규칙 요약
 
 - `double -> float` 변환은 허용됩니다. (정밀도 손실 가능)
-- `int -> float`, `int -> double` 변환은 허용됩니다. (예: `a = 3` -> `3.0`)
+- `int -> float`, `int -> double` 변환은 허용됩니다. (`a = 3` -> `3.0`)
 - `str("3") -> float/double` 변환은 허용됩니다. 결과는 `3.0` 형태로 출력됩니다.
 - `bool -> float/double` 직접 변환은 허용되지 않습니다.
 
@@ -142,23 +238,34 @@ int x = int("abc")
 
 ## 현재 제한 사항
 
-- 엔진은 native 단일 경로입니다.
-- 사용자 정의 함수는 없습니다.
-- `&T`, `&mut T` 빌려쓰기 선언은 문법은 존재하지만 native 실행에서 지원하지 않습니다.
-- `%`(modulo) 연산자는 현재 없습니다.
+- 엔진 선택은 없습니다. 항상 native 진입점을 사용합니다.
+- 단일 상속(`class Child(Parent):`)을 지원합니다.
+- `protect`는 현재 같은 클래스 + 자식 클래스에서 접근 가능합니다.
+- `default`는 현재 `public`처럼 동작합니다.
+- `import`는 현재 파일 로딩 기반(패키지 시스템 없음)입니다.
+- `&T`, `&mut T` 빌려쓰기 선언은 문법은 남아 있지만 native/evaluator 경로에서 사실상 지원 대상이 아닙니다.
 
 ## 간단 예제
 
 ```yu
-str name = input("name: ")
-float amount = float(name)
-println("amount:", amount)
+public def add(int a, int b):
+    return a + b
 
-int a = 10
-int b = 20
-int c = 30
-a, b, c = c, b, a
-println(a, b, c)
+class Box:
+    public int value = 0
+    private int secret = 1
 
-println(type(amount), type(a), type(name))
+    public def init(self, int start):
+        self.value = start
+        self.secret = start + 10
+
+    public def inc(self):
+        self.value = self.value + 1
+        return self.value
+
+println(add(2, 3))
+
+Box b = Box(5)
+println(type(b), b.value)
+println(b.inc())
 ```

@@ -8,6 +8,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataDescription, default_libcall_names, Linkage, Module};
 
 use crate::builtins::BuiltinFunction;
+use crate::evaluator;
 use crate::parser::{BinaryOp, Expr, Program, Stmt, UnaryOp};
 use crate::runtime::{BindingMode, TypeName, Value};
 
@@ -43,6 +44,10 @@ enum NativeValueKind {
 
 impl NativeBackend for CraneliftBackend {
     fn execute_program(&self, program: &Program) -> Result<Value, String> {
+        if requires_evaluator(program) {
+            return evaluator::execute_program(program);
+        }
+
         let mut flag_builder = settings::builder();
         flag_builder
             .set("opt_level", "speed")
@@ -121,6 +126,46 @@ impl NativeBackend for CraneliftBackend {
             NativeValueKind::Int => Value::Int(raw),
             NativeValueKind::Bool => Value::Bool(raw != 0),
         })
+    }
+}
+
+fn requires_evaluator(program: &Program) -> bool {
+    program.statements.iter().any(stmt_requires_evaluator)
+}
+
+fn stmt_requires_evaluator(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Import { .. }
+        |
+        Stmt::FunctionDef { .. }
+        | Stmt::ClassDef { .. }
+        | Stmt::MemberAssign { .. }
+        | Stmt::Return(_) => true,
+        Stmt::Expr(expr) => expr_requires_evaluator(expr),
+        Stmt::VarDecl { ty, value, .. } => matches!(ty, TypeName::Named(_)) || expr_requires_evaluator(value),
+        Stmt::Assign { value, .. } => expr_requires_evaluator(value),
+        Stmt::Swap { .. } => false,
+        Stmt::If { branches, else_branch } => {
+            if else_branch.is_empty() {
+                return true;
+            }
+            branches.iter().any(|(cond, body)| expr_requires_evaluator(cond) || body.iter().any(stmt_requires_evaluator))
+                || else_branch.iter().any(stmt_requires_evaluator)
+        }
+        Stmt::While { condition, body } => expr_requires_evaluator(condition) || body.iter().any(stmt_requires_evaluator),
+        Stmt::ForRange { start, end, body, .. } => {
+            expr_requires_evaluator(start) || expr_requires_evaluator(end) || body.iter().any(stmt_requires_evaluator)
+        }
+    }
+}
+
+fn expr_requires_evaluator(expr: &Expr) -> bool {
+    match expr {
+        Expr::Member { .. } | Expr::MethodCall { .. } => true,
+        Expr::Call { args, .. } => args.iter().any(expr_requires_evaluator),
+        Expr::Unary { expr, .. } => expr_requires_evaluator(expr),
+        Expr::Binary { left, right, .. } => expr_requires_evaluator(left) || expr_requires_evaluator(right),
+        _ => false,
     }
 }
 
@@ -388,6 +433,11 @@ impl<'a, 'b> NativeCodegen<'a, 'b> {
 
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(cranelift_codegen::ir::Value, NativeValueKind), String> {
         match stmt {
+            Stmt::Import { .. }
+            |
+            Stmt::FunctionDef { .. } | Stmt::ClassDef { .. } | Stmt::MemberAssign { .. } | Stmt::Return(_) => {
+                Err("advanced syntax is handled by evaluator fallback".to_string())
+            }
             Stmt::Expr(expr) => self.compile_expr(expr),
             Stmt::VarDecl { binding, name, ty, value } => {
                 if *binding != BindingMode::Owned {
@@ -395,13 +445,13 @@ impl<'a, 'b> NativeCodegen<'a, 'b> {
                 }
                 let (expr_value, expr_ty) = self.compile_expr(value)?;
                 let var = self.alloc_var(types::I64);
-                let stored = self.coerce(expr_value, expr_ty, *ty)?;
+                let stored = self.coerce(expr_value, expr_ty, ty.clone())?;
                 self.builder.def_var(var, stored);
-                self.vars.insert(name.clone(), (var, *ty));
+                self.vars.insert(name.clone(), (var, ty.clone()));
                 Ok((self.builder.ins().iconst(types::I64, 0), NativeValueKind::Unit))
             }
             Stmt::Assign { name, value } => {
-                let (var, ty) = self.vars.get(name).copied()
+                let (var, ty) = self.vars.get(name).cloned()
                     .ok_or_else(|| format!("undefined variable: {name}"))?;
                 let (expr_value, expr_ty) = self.compile_expr(value)?;
                 let stored = self.coerce(expr_value, expr_ty, ty)?;
@@ -420,7 +470,7 @@ impl<'a, 'b> NativeCodegen<'a, 'b> {
                     let (rhs_var, rhs_ty) = self
                         .vars
                         .get(rhs_name)
-                        .copied()
+                        .cloned()
                         .ok_or_else(|| format!("undefined variable: {rhs_name}"))?;
                     rhs_values.push(self.builder.use_var(rhs_var));
                     rhs_types.push(rhs_ty);
@@ -430,9 +480,9 @@ impl<'a, 'b> NativeCodegen<'a, 'b> {
                     let (left_var, left_ty) = self
                         .vars
                         .get(left_name)
-                        .copied()
+                        .cloned()
                         .ok_or_else(|| format!("undefined variable: {left_name}"))?;
-                    let rhs_ty = rhs_types[index];
+                    let rhs_ty = rhs_types[index].clone();
                     if left_ty != rhs_ty {
                         return Err(format!(
                             "swap requires same type at position {}: '{}' is '{}', RHS is '{}'",
@@ -643,7 +693,7 @@ impl<'a, 'b> NativeCodegen<'a, 'b> {
                 let (var, ty) = self
                     .vars
                     .get(name)
-                    .copied()
+                    .cloned()
                     .ok_or_else(|| format!("undefined variable: {name}"))?;
                 Ok((
                     self.builder.use_var(var),
@@ -653,10 +703,16 @@ impl<'a, 'b> NativeCodegen<'a, 'b> {
                         TypeName::Float => NativeValueKind::Float,
                         TypeName::Double => NativeValueKind::Double,
                         TypeName::Str => NativeValueKind::Str,
+                        TypeName::Named(_) => {
+                            return Err("class/object values are handled by evaluator fallback".to_string())
+                        }
                     },
                 ))
             }
             Expr::Call { name, args } => self.compile_call(name, args),
+            Expr::Member { .. } | Expr::MethodCall { .. } => {
+                Err("member access is handled by evaluator fallback".to_string())
+            }
             Expr::Unary { op, expr } => {
                 let (value, ty) = self.compile_expr(expr)?;
                 match op {
@@ -932,6 +988,12 @@ impl<'a, 'b> NativeCodegen<'a, 'b> {
                 }
                 Ok((self.builder.ins().sdiv(lhs, rhs), NativeValueKind::Int))
             }
+            BinaryOp::Mod => {
+                if lhs_ty != NativeValueKind::Int || rhs_ty != NativeValueKind::Int {
+                    return Err("native backend '%' supports int only".to_string());
+                }
+                Ok((self.builder.ins().srem(lhs, rhs), NativeValueKind::Int))
+            }
             BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::Lte | BinaryOp::Gt | BinaryOp::Gte => {
                 if lhs_ty != rhs_ty {
                     return Err("native backend comparison requires matching operand types".to_string());
@@ -963,6 +1025,9 @@ impl<'a, 'b> NativeCodegen<'a, 'b> {
             TypeName::Float => NativeValueKind::Float,
             TypeName::Double => NativeValueKind::Double,
             TypeName::Str => NativeValueKind::Str,
+            TypeName::Named(_) => {
+                return Err("class/object coercion is handled by evaluator fallback".to_string())
+            }
         };
 
         if source == target_kind {

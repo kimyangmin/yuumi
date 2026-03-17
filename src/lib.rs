@@ -1,5 +1,6 @@
 pub mod builtins;
 pub mod codegen;
+pub mod evaluator;
 pub mod keywords;
 pub mod lexer;
 pub mod parser;

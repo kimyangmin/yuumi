@@ -12,6 +12,13 @@ pub enum Token {
     Double,
     Bool,
     Str,
+    Def,
+    Class,
+    Return,
+    Public,
+    Private,
+    Default,
+    Protect,
     Mut,
     If,
     Elif,
@@ -19,11 +26,13 @@ pub enum Token {
     While,
     For,
     In,
+    Import,
     Not,
     True,
     False,
     Colon,
     Comma,
+    Dot,
     Equal,
     EqualEqual,
     BangEqual,
@@ -38,6 +47,7 @@ pub enum Token {
     Plus,
     Minus,
     Star,
+    Percent,
     Slash,
     LParen,
     RParen,
@@ -114,6 +124,10 @@ impl<'a> Lexer<'a> {
                     chars.next();
                     tokens.push(Token::Star);
                 }
+                '%' => {
+                    chars.next();
+                    tokens.push(Token::Percent);
+                }
                 '/' => {
                     chars.next();
                     tokens.push(Token::Slash);
@@ -129,6 +143,10 @@ impl<'a> Lexer<'a> {
                 ',' => {
                     chars.next();
                     tokens.push(Token::Comma);
+                }
+                '.' => {
+                    chars.next();
+                    tokens.push(Token::Dot);
                 }
                 '&' => {
                     chars.next();
@@ -302,6 +320,13 @@ impl<'a> Lexer<'a> {
             Some(Keyword::Double) => Token::Double,
             Some(Keyword::Bool) => Token::Bool,
             Some(Keyword::Str) => Token::Str,
+            Some(Keyword::Def) => Token::Def,
+            Some(Keyword::Class) => Token::Class,
+            Some(Keyword::Return) => Token::Return,
+            Some(Keyword::Public) => Token::Public,
+            Some(Keyword::Private) => Token::Private,
+            Some(Keyword::Default) => Token::Default,
+            Some(Keyword::Protect) => Token::Protect,
             Some(Keyword::Mut) => Token::Mut,
             Some(Keyword::If) => Token::If,
             Some(Keyword::Elif) => Token::Elif,
@@ -309,6 +334,7 @@ impl<'a> Lexer<'a> {
             Some(Keyword::While) => Token::While,
             Some(Keyword::For) => Token::For,
             Some(Keyword::In) => Token::In,
+            Some(Keyword::Import) => Token::Import,
             Some(Keyword::Not) => Token::Not,
             Some(Keyword::True) => Token::True,
             Some(Keyword::False) => Token::False,

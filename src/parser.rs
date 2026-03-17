@@ -3,6 +3,37 @@ use crate::lexer::Token;
 use crate::runtime::{BindingMode, TypeName};
 use std::collections::HashSet;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessLevel {
+    Public,
+    Default,
+    Private,
+    Protect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Param {
+    pub name: String,
+    pub ty: Option<TypeName>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassMember {
+    Field {
+        access: AccessLevel,
+        name: String,
+        ty: TypeName,
+        value: Expr,
+    },
+    Method {
+        access: AccessLevel,
+        name: String,
+        return_type: Option<TypeName>,
+        params: Vec<Param>,
+        body: Vec<Stmt>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub statements: Vec<Stmt>,
@@ -11,6 +42,21 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Expr(Expr),
+    Import {
+        path: String,
+    },
+    FunctionDef {
+        access: AccessLevel,
+        return_type: Option<TypeName>,
+        name: String,
+        params: Vec<Param>,
+        body: Vec<Stmt>,
+    },
+    ClassDef {
+        name: String,
+        base: Option<String>,
+        members: Vec<ClassMember>,
+    },
     VarDecl {
         binding: BindingMode,
         name: String,
@@ -21,10 +67,16 @@ pub enum Stmt {
         name: String,
         value: Expr,
     },
+    MemberAssign {
+        object: Expr,
+        member: String,
+        value: Expr,
+    },
     Swap {
         left: Vec<String>,
         right: Vec<String>,
     },
+    Return(Option<Expr>),
     If {
         branches: Vec<(Expr, Vec<Stmt>)>,
         else_branch: Vec<Stmt>,
@@ -53,6 +105,15 @@ pub enum Expr {
         name: String,
         args: Vec<Expr>,
     },
+    Member {
+        object: Box<Expr>,
+        member: String,
+    },
+    MethodCall {
+        object: Box<Expr>,
+        method: String,
+        args: Vec<Expr>,
+    },
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
@@ -75,6 +136,7 @@ pub enum BinaryOp {
     Add,
     Sub,
     Mul,
+    Mod,
     Div,
     Eq,
     NotEq,
@@ -108,25 +170,241 @@ impl Parser {
 
     fn parse_statement(&mut self) -> Result<Stmt, String> {
         match self.peek() {
+            Token::Import => self.parse_import_statement(),
+            Token::Public | Token::Private | Token::Default | Token::Protect => {
+                let access = self.parse_access_level()?;
+                if matches!(self.peek(), Token::Def) {
+                    self.parse_function_def(access, None)
+                } else if Self::is_type_name_start(self.peek()) && matches!(self.peek_offset(1), Token::Def) {
+                    let return_type = self.parse_type_name()?;
+                    self.parse_function_def(access, Some(return_type))
+                } else {
+                    Err("access modifier must be followed by def or '<type> def'".to_string())
+                }
+            }
+            Token::Def => self.parse_function_def(AccessLevel::Default, None),
+            token if Self::is_type_name_start(token) && matches!(self.peek_offset(1), Token::Def) => {
+                let return_type = self.parse_type_name()?;
+                self.parse_function_def(AccessLevel::Default, Some(return_type))
+            }
+            Token::Class => self.parse_class_def(),
+            Token::Return => self.parse_return_statement(),
             Token::If => self.parse_if_statement(),
             Token::While => self.parse_while_statement(),
             Token::For => self.parse_for_statement(),
+            Token::Identifier(_) if self.looks_like_named_decl() => self.parse_var_decl(),
             token if Self::is_decl_start(token) && !matches!(self.peek_offset(1), Token::LParen) => {
                 self.parse_var_decl()
             }
-            Token::Identifier(_) if matches!(self.peek_offset(1), Token::Comma) => self.parse_swap_statement(),
-            // 재할당: identifier = expr
-            Token::Identifier(_) if self.peek_offset(1) == &Token::Equal => {
-                let name = match self.advance() {
-                    Token::Identifier(n) => n,
-                    _ => unreachable!(),
-                };
-                self.advance(); // consume '='
-                let value = self.parse_expression()?;
-                Ok(Stmt::Assign { name, value })
+            Token::Identifier(_) => {
+                if let Some(stmt) = self.try_parse_assignment_like()? {
+                    Ok(stmt)
+                } else {
+                    Ok(Stmt::Expr(self.parse_expression()?))
+                }
             }
             _ => Ok(Stmt::Expr(self.parse_expression()?)),
         }
+    }
+
+    fn parse_import_statement(&mut self) -> Result<Stmt, String> {
+        self.expect(Token::Import, "expected 'import'")?;
+        let path = match self.advance() {
+            Token::StringLiteral(path) => path,
+            Token::Identifier(module) => format!("{module}.yu"),
+            other => return Err(format!("expected module path after import, found {other:?}")),
+        };
+        Ok(Stmt::Import { path })
+    }
+
+    fn try_parse_assignment_like(&mut self) -> Result<Option<Stmt>, String> {
+        let saved = self.pos;
+
+        if matches!(self.peek_offset(1), Token::Comma) {
+            let stmt = self.parse_swap_statement()?;
+            return Ok(Some(stmt));
+        }
+
+        let target = self.parse_expression()?;
+        if !matches!(self.peek(), Token::Equal) {
+            self.pos = saved;
+            return Ok(None);
+        }
+        self.advance();
+        let value = self.parse_expression()?;
+
+        match target {
+            Expr::Variable(name) => Ok(Some(Stmt::Assign { name, value })),
+            Expr::Member { object, member } => Ok(Some(Stmt::MemberAssign {
+                object: *object,
+                member,
+                value,
+            })),
+            _ => Err("invalid assignment target".to_string()),
+        }
+    }
+
+    fn parse_access_level(&mut self) -> Result<AccessLevel, String> {
+        match self.advance() {
+            Token::Public => Ok(AccessLevel::Public),
+            Token::Private => Ok(AccessLevel::Private),
+            Token::Default => Ok(AccessLevel::Default),
+            Token::Protect => Ok(AccessLevel::Protect),
+            other => Err(format!("expected access modifier, found {other:?}")),
+        }
+    }
+
+    fn parse_return_statement(&mut self) -> Result<Stmt, String> {
+        self.expect(Token::Return, "expected 'return'")?;
+        if matches!(self.peek(), Token::Newline | Token::Dedent | Token::Eof) {
+            Ok(Stmt::Return(None))
+        } else {
+            Ok(Stmt::Return(Some(self.parse_expression()?)))
+        }
+    }
+
+    fn parse_function_def(&mut self, access: AccessLevel, return_type: Option<TypeName>) -> Result<Stmt, String> {
+        self.expect(Token::Def, "expected 'def'")?;
+        let name = match self.advance() {
+            Token::Identifier(name) => name,
+            other => return Err(format!("expected function name, found {other:?}")),
+        };
+        self.expect(Token::LParen, "expected '(' after function name")?;
+        let params = self.parse_params()?;
+        self.expect(Token::RParen, "expected ')' after parameter list")?;
+        self.expect(Token::Colon, "expected ':' after function signature")?;
+        let body = self.parse_suite()?;
+        Ok(Stmt::FunctionDef {
+            access,
+            return_type,
+            name,
+            params,
+            body,
+        })
+    }
+
+    fn parse_class_def(&mut self) -> Result<Stmt, String> {
+        self.expect(Token::Class, "expected 'class'")?;
+        let name = match self.advance() {
+            Token::Identifier(name) => name,
+            other => return Err(format!("expected class name, found {other:?}")),
+        };
+
+        let base = if matches!(self.peek(), Token::LParen) {
+            self.advance();
+            let base = match self.advance() {
+                Token::Identifier(base) => base,
+                other => return Err(format!("expected base class name, found {other:?}")),
+            };
+            self.expect(Token::RParen, "expected ')' after base class")?;
+            Some(base)
+        } else {
+            None
+        };
+
+        self.expect(Token::Colon, "expected ':' after class name")?;
+        self.expect(Token::Newline, "expected newline after class header")?;
+        self.expect(Token::Indent, "expected indented class body")?;
+
+        let mut members = Vec::new();
+        self.consume_newlines();
+        while !matches!(self.peek(), Token::Dedent | Token::Eof) {
+            members.push(self.parse_class_member()?);
+            self.consume_newlines();
+        }
+
+        self.expect(Token::Dedent, "expected end of class block")?;
+        Ok(Stmt::ClassDef { name, base, members })
+    }
+
+    fn parse_class_member(&mut self) -> Result<ClassMember, String> {
+        let access = match self.peek() {
+            Token::Public | Token::Private | Token::Default | Token::Protect => self.parse_access_level()?,
+            _ => AccessLevel::Default,
+        };
+
+        let (return_type, expects_def) = if matches!(self.peek(), Token::Def) {
+            (None, true)
+        } else if Self::is_type_name_start(self.peek()) && matches!(self.peek_offset(1), Token::Def) {
+            (Some(self.parse_type_name()?), true)
+        } else {
+            (None, false)
+        };
+
+        if expects_def {
+            let stmt = self.parse_function_def(access, return_type)?;
+                match stmt {
+                    Stmt::FunctionDef { name, return_type, params, body, .. } => Ok(ClassMember::Method {
+                        access,
+                        name,
+                        return_type,
+                        params,
+                        body,
+                    }),
+                    _ => unreachable!(),
+                }
+        } else {
+            match self.peek() {
+            Token::Identifier(_) if self.looks_like_named_decl() => {
+                let decl = self.parse_var_decl()?;
+                match decl {
+                    Stmt::VarDecl { name, ty, value, .. } => Ok(ClassMember::Field {
+                        access,
+                        name,
+                        ty,
+                        value,
+                    }),
+                    _ => unreachable!(),
+                }
+            }
+            token if Self::is_decl_start(token) && !matches!(self.peek_offset(1), Token::LParen) => {
+                let decl = self.parse_var_decl()?;
+                match decl {
+                    Stmt::VarDecl { name, ty, value, .. } => Ok(ClassMember::Field {
+                        access,
+                        name,
+                        ty,
+                        value,
+                    }),
+                    _ => unreachable!(),
+                }
+            }
+            _ => Err("class body supports only field declarations and def methods".to_string()),
+            }
+        }
+    }
+
+    fn parse_params(&mut self) -> Result<Vec<Param>, String> {
+        let mut params = Vec::new();
+        if matches!(self.peek(), Token::RParen) {
+            return Ok(params);
+        }
+
+        loop {
+            let param = match (self.peek().clone(), self.peek_offset(1).clone()) {
+                (Token::Identifier(name), Token::Comma | Token::RParen) => {
+                    self.advance();
+                    Param { name, ty: None }
+                }
+                _ => {
+                    let ty = self.parse_type_name()?;
+                    let name = match self.advance() {
+                        Token::Identifier(name) => name,
+                        other => return Err(format!("expected parameter name, found {other:?}")),
+                    };
+                    Param { name, ty: Some(ty) }
+                }
+            };
+            params.push(param);
+
+            if matches!(self.peek(), Token::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        Ok(params)
     }
 
     fn parse_swap_statement(&mut self) -> Result<Stmt, String> {
@@ -181,6 +459,14 @@ impl Parser {
         matches!(token, Token::Int | Token::Float | Token::Double | Token::Bool | Token::Str | Token::Ampersand)
     }
 
+    fn is_type_name_start(token: &Token) -> bool {
+        matches!(token, Token::Int | Token::Float | Token::Double | Token::Bool | Token::Str | Token::Identifier(_))
+    }
+
+    fn looks_like_named_decl(&self) -> bool {
+        matches!(self.peek(), Token::Identifier(_)) && matches!(self.peek_offset(1), Token::Identifier(_))
+    }
+
     fn parse_var_decl(&mut self) -> Result<Stmt, String> {
         let binding = if matches!(self.peek(), Token::Ampersand) {
             self.advance();
@@ -218,6 +504,7 @@ impl Parser {
             Token::Double => Ok(TypeName::Double),
             Token::Bool => Ok(TypeName::Bool),
             Token::Str => Ok(TypeName::Str),
+            Token::Identifier(name) => Ok(TypeName::Named(name)),
             other => Err(format!("expected type name, found {other:?}")),
         }
     }
@@ -237,9 +524,13 @@ impl Parser {
             branches.push((condition, self.parse_suite()?));
         }
 
-        self.expect(Token::Else, "expected 'else' after if/elif chain")?;
-        self.expect(Token::Colon, "expected ':' after else")?;
-        let else_branch = self.parse_suite()?;
+        let else_branch = if matches!(self.peek(), Token::Else) {
+            self.advance();
+            self.expect(Token::Colon, "expected ':' after else")?;
+            self.parse_suite()?
+        } else {
+            Vec::new()
+        };
 
         Ok(Stmt::If {
             branches,
@@ -376,6 +667,7 @@ impl Parser {
         loop {
             let op = match self.peek() {
                 Token::Star => BinaryOp::Mul,
+                Token::Percent => BinaryOp::Mod,
                 Token::Slash => BinaryOp::Div,
                 _ => break,
             };
@@ -413,7 +705,7 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<Expr, String> {
-        match self.advance() {
+        let expr = match self.advance() {
             Token::IntLiteral(value) => Ok(Expr::IntLiteral(value)),
             Token::FloatLiteral(value) => Ok(Expr::FloatLiteral(value)),
             Token::DoubleLiteral(value) => Ok(Expr::DoubleLiteral(value)),
@@ -424,24 +716,12 @@ impl Parser {
             Token::Float => self.parse_keyword_call("float"),
             Token::Double => self.parse_keyword_call("double"),
             Token::Str => self.parse_keyword_call("str"),
+            Token::Identifier(name) if name == "type" && matches!(self.peek(), Token::LParen) => {
+                self.parse_named_call(name)
+            }
             Token::Identifier(name) => {
                 if matches!(self.peek(), Token::LParen) {
-                    self.advance();
-                    let mut args = Vec::new();
-
-                    if !matches!(self.peek(), Token::RParen) {
-                        loop {
-                            args.push(self.parse_expression()?);
-                            if matches!(self.peek(), Token::Comma) {
-                                self.advance();
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-
-                    self.expect(Token::RParen, "expected ')' after call arguments")?;
-                    Ok(Expr::Call { name, args })
+                    self.parse_named_call(name)
                 } else {
                     Ok(Expr::Variable(name))
                 }
@@ -452,7 +732,9 @@ impl Parser {
                 Ok(expr)
             }
             other => Err(format!("unexpected token in expression: {other:?}")),
-        }
+        }?;
+
+        self.parse_postfix(expr)
     }
 
     fn parse_keyword_call(&mut self, name: &str) -> Result<Expr, String> {
@@ -460,7 +742,11 @@ impl Parser {
             return Err(format!("unexpected type keyword '{name}' in expression"));
         }
 
-        self.advance();
+        self.parse_named_call(name.to_string())
+    }
+
+    fn parse_named_call(&mut self, name: String) -> Result<Expr, String> {
+        self.expect(Token::LParen, "expected '(' after function name")?;
         let mut args = Vec::new();
         if !matches!(self.peek(), Token::RParen) {
             loop {
@@ -473,10 +759,48 @@ impl Parser {
             }
         }
         self.expect(Token::RParen, "expected ')' after call arguments")?;
-        Ok(Expr::Call {
-            name: name.to_string(),
-            args,
-        })
+        Ok(Expr::Call { name, args })
+    }
+
+    fn parse_postfix(&mut self, mut expr: Expr) -> Result<Expr, String> {
+        loop {
+            match self.peek() {
+                Token::Dot => {
+                    self.advance();
+                    let member = match self.advance() {
+                        Token::Identifier(name) => name,
+                        other => return Err(format!("expected member name after '.', found {other:?}")),
+                    };
+                    if matches!(self.peek(), Token::LParen) {
+                        self.expect(Token::LParen, "expected '(' after method name")?;
+                        let mut args = Vec::new();
+                        if !matches!(self.peek(), Token::RParen) {
+                            loop {
+                                args.push(self.parse_expression()?);
+                                if matches!(self.peek(), Token::Comma) {
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        self.expect(Token::RParen, "expected ')' after method arguments")?;
+                        expr = Expr::MethodCall {
+                            object: Box::new(expr),
+                            method: member,
+                            args,
+                        };
+                    } else {
+                        expr = Expr::Member {
+                            object: Box::new(expr),
+                            member,
+                        };
+                    }
+                }
+                _ => break,
+            }
+        }
+        Ok(expr)
     }
 
     fn consume_newlines(&mut self) {
