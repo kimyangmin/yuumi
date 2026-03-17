@@ -1,8 +1,11 @@
 # build files
 /target/
 
+# idea files
+/.idea/
+
 # rustfmt backup file
 **/*.rs.bk
 
-# MSVC Windows debug files
+# MSVC Windows debug file
 *.pdb
