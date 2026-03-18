@@ -1,0 +1,40 @@
+{
+  "name": "yuumi-language-support",
+  "displayName": "Yuumi Language Support",
+  "description": "Syntax highlighting and language configuration for Yuumi (.yu)",
+  "version": "0.0.1",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:yuumi"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "yuumi",
+        "aliases": [
+          "Yuumi",
+          "yuumi"
+        ],
+        "extensions": [
+          ".yu"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "yuumi",
+        "scopeName": "source.yuumi",
+        "path": "./yuumi.tmLanguage.json"
+      }
+    ]
+  }
+}
+

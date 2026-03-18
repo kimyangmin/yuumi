@@ -1,0 +1,245 @@
+{
+  "name": "Yuumi",
+  "scopeName": "source.yuumi",
+  "fileTypes": [
+    "yu"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#class-def"
+    },
+    {
+      "include": "#function-def"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#member-access"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.yuumi",
+          "begin": "//",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.yuumi"
+            }
+          },
+          "end": "$"
+        },
+        {
+          "name": "comment.block.yuumi",
+          "begin": "/\\*",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.begin.yuumi"
+            }
+          },
+          "end": "\\*/",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.end.yuumi"
+            }
+          }
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.yuumi",
+          "begin": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.yuumi"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.yuumi"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.yuumi",
+              "match": "\\\\[\\\\\"ntr]"
+            }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.yuumi",
+          "match": "\\b(if|elif|else|while|for|in|return|import|not)\\b"
+        },
+        {
+          "name": "keyword.declaration.yuumi",
+          "match": "\\b(class|def)\\b"
+        },
+        {
+          "name": "storage.modifier.access.yuumi",
+          "match": "\\b(public|private|default|protect|protected)\\b"
+        },
+        {
+          "name": "storage.modifier.yuumi",
+          "match": "\\b(mut)\\b"
+        },
+        {
+          "name": "storage.type.yuumi",
+          "match": "\\b(int|float|double|bool|str)\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.yuumi",
+          "match": "\\b(print|println|input|type|range|str|int|float|double)\\s*(?=\\()"
+        }
+      ]
+    },
+    "class-def": {
+      "patterns": [
+        {
+          "name": "meta.class.yuumi",
+          "match": "\\b(class)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.class.yuumi"
+            },
+            "2": {
+              "name": "entity.name.type.class.yuumi"
+            }
+          }
+        }
+      ]
+    },
+    "function-def": {
+      "patterns": [
+        {
+          "name": "meta.function.yuumi",
+          "match": "(?:\\b(public|private|default|protect|protected)\\b\\s+)?(?:\\b(int|float|double|bool|str|[A-Za-z_][A-Za-z0-9_]*)\\b\\s+)?\\b(def)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.access.yuumi"
+            },
+            "2": {
+              "name": "storage.type.yuumi"
+            },
+            "3": {
+              "name": "keyword.declaration.function.yuumi"
+            },
+            "4": {
+              "name": "entity.name.function.yuumi"
+            }
+          }
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.yuumi",
+          "match": "\\b\\d+\\.\\d+[fF]\\b"
+        },
+        {
+          "name": "constant.numeric.double.yuumi",
+          "match": "\\b\\d+\\.\\d+([dD])?\\b"
+        },
+        {
+          "name": "constant.numeric.float.yuumi",
+          "match": "\\b\\d+[fF]\\b"
+        },
+        {
+          "name": "constant.numeric.integer.yuumi",
+          "match": "\\b\\d+\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.yuumi",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.assignment.yuumi",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.arithmetic.yuumi",
+          "match": "\\+|-|\\*|/|%"
+        },
+        {
+          "name": "punctuation.separator.comma.yuumi",
+          "match": ","
+        },
+        {
+          "name": "punctuation.separator.colon.yuumi",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.accessor.dot.yuumi",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.definition.reference.yuumi",
+          "match": "&"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.yuumi",
+          "match": "\\b(True|False|true|false)\\b"
+        }
+      ]
+    },
+    "member-access": {
+      "patterns": [
+        {
+          "name": "meta.member.access.yuumi",
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "variable.other.object.yuumi"
+            },
+            "2": {
+              "name": "punctuation.accessor.dot.yuumi"
+            },
+            "3": {
+              "name": "variable.other.member.yuumi"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+
