@@ -130,7 +130,7 @@ for i in range(100000):
     total = total + i  # 타입 검사 → 덧셈 실행 (반복)
 ```
 
-```rust
+```yuumi
 // Yuumi: 컴파일 타임 타입 결정
 for i in range(100000):
     total = total + i  // int + int → 단순 i64 덧셈 (타입 체크 없음)
